@@ -184,4 +184,4 @@ Interactive docs are at **http://127.0.0.1:8000/docs**.
 
 ## Author
 
-**Daniel Aklilu** · [GitHub](https://github.com/Dan-Ak26)
+**Daniel Aklilu** 
