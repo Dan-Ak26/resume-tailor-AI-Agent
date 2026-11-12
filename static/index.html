@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resume Tailor</title>
+<style>
+  :root {
+    --bg: #0b0910; --card: #15111d; --ink: #ece8f5; --muted: #9d95b3; --line: #2b2440;
+    --accent: #8b5cf6; --accent-hover: #7c4ae8; --accent-soft: rgba(139, 92, 246, .14);
+    --danger: #f0717a; --danger-soft: rgba(240, 113, 122, .12);
+    --warn: #e2b04a; --warn-soft: rgba(226, 176, 74, .12);
+    --field: #0f0c16;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+    background: radial-gradient(1200px 600px at 50% -200px, rgba(139, 92, 246, .22), transparent 70%), var(--bg);
+    min-height: 100vh;
+  }
+  main { max-width: 820px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  textarea { width: 100%; font: inherit; color: inherit; background: var(--field); border: 1px solid var(--line); border-radius: 8px; padding: 10px; resize: vertical; }
+  textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea::placeholder { color: #6f6886; }
+  #jd { min-height: 200px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  button { font: inherit; color: var(--ink); border: 1px solid var(--line); background: #1d1828; border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  button:hover { border-color: #463b66; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: var(--accent-hover); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .hidden { display: none !important; }
+  .error { color: var(--danger); }
+  .meta { font-size: 13px; color: var(--muted); }
+
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .steps > li { display: flex; gap: 10px; padding: 6px 0; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); margin-top: 7px; flex: none; }
+  .steps > li.active { color: var(--ink); }
+  .steps > li.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulse .8s infinite alternate; }
+  .steps > li.done { color: var(--ink); }
+  .steps > li.done .dot { background: #a78bfa; }
+  @keyframes pulse { to { opacity: .3; } }
+  .detail { font-size: 13px; color: var(--muted); }
+  .reqs { margin: 6px 0 0; padding-left: 18px; }
+
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; background: #120e19; transition: background .15s, border-color .15s; }
+  .card.accept { border-color: var(--accent); background: var(--accent-soft); }
+  .card.edit { border-color: var(--warn); background: var(--warn-soft); }
+  .card.reject { border-color: var(--danger); background: var(--danger-soft); }
+  .card.reject .text { text-decoration: line-through; color: var(--muted); }
+  .text { margin: 0 0 8px; }
+  .chip { display: inline-block; font-size: 12px; color: #c9b8ff; border: 1px solid #3a2f5a; border-radius: 999px; padding: 1px 9px; margin: 6px 4px 0 0; background: rgba(139, 92, 246, .08); cursor: help; }
+  .actions button.on { font-weight: 600; border-color: var(--ink); }
+  #approved { padding-left: 20px; margin: 0; }
+  #approved li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Resume <span>Tailor</span></h1>
+  <p class="sub">Paste a job description. Claude drafts bullets from your experience, and you approve each one.</p>
+
+  <section>
+    <h2>1. Job description</h2>
+    <textarea id="jd" placeholder="Paste the job posting here..."></textarea>
+    <div class="row">
+      <button class="primary" id="start">Tailor my resume</button>
+      <button id="loadSample">Load data/jobs/jd.txt</button>
+      <span class="error" id="startError"></span>
+    </div>
+  </section>
+
+  <section id="progress" class="hidden">
+    <h2>2. Progress</h2>
+    <ul class="steps" id="steps"></ul>
+  </section>
+
+  <section id="review" class="hidden">
+    <h2>3. Review bullets</h2>
+    <p class="meta">Hover an evidence tag to see the source text.</p>
+    <div id="cards"></div>
+    <div class="row">
+      <button class="primary" id="submit" disabled>Save approved bullets</button>
+      <span class="meta" id="counter"></span>
+      <span class="error" id="reviewError"></span>
+    </div>
+  </section>
+
+  <section id="result" class="hidden">
+    <h2>4. Approved bullets</h2>
+    <ul id="approved"></ul>
+    <div class="row">
+      <button id="copy">Copy bullets</button>
+      <button id="download">Download .md</button>
+      <span class="meta" id="savedPath"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STEPS = [
+  ["parse_jd", "Parse job description"],
+  ["retrieve", "Retrieve matching experience"],
+  ["draft_bullets", "Draft bullets with citations"],
+  ["human_review", "Your review"],
+];
+let runId = null, bullets = [], decisions = [], editors = [], approvedTexts = [], markdown = "";
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  node.append(...children);
+  return node;
+}
+
+function renderSteps() {
+  $("steps").replaceChildren(...STEPS.map(([key, label], i) =>
+    el("li", { id: "step-" + key, className: i === 0 ? "active" : "" },
+      el("span", { className: "dot" }),
+      el("div", {}, el("div", { textContent: label }), el("div", { className: "detail" })))));
+}
+
+function markStep(key, detail) {
+  const i = STEPS.findIndex(([k]) => k === key);
+  if (i < 0) return;
+  const li = $("step-" + key);
+  li.className = "done";
+  li.querySelector(".detail").textContent = detail || "";
+  if (STEPS[i + 1]) $("step-" + STEPS[i + 1][0]).className = "active";
+}
+
+function fail(message) {
+  $("startError").textContent = message;
+  $("start").disabled = false;
+  document.querySelectorAll(".steps > li.active").forEach((li) => (li.className = ""));
+}
+
+async function start() {
+  const jd = $("jd").value.trim();
+  $("startError").textContent = "";
+  if (!jd) { $("startError").textContent = "Paste a job description first."; return; }
+
+  $("start").disabled = true;
+  $("review").classList.add("hidden");
+  $("result").classList.add("hidden");
+  $("progress").classList.remove("hidden");
+  renderSteps();
+
+  try {
+    const res = await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jd }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || "Could not start run.");
+    runId = body.run_id;
+  } catch (err) { fail(err.message); return; }
+
+  // Server-Sent Events: live progress from each LangGraph node
+  const es = new EventSource(`/api/runs/${runId}/stream`);
+  es.addEventListener("progress", (e) => {
+    const d = JSON.parse(e.data);
+    markStep(d.node, d.message);
+    if (d.requirements) {
+      $("step-parse_jd").querySelector(".detail").append(
+        el("ul", { className: "reqs" }, ...d.requirements.map((r) => el("li", { textContent: r }))));
+    }
+  });
+  es.addEventListener("review", (e) => { es.close(); const d = JSON.parse(e.data); renderReview(d.bullets, d.evidence); });
+  es.addEventListener("failed", (e) => { es.close(); fail(JSON.parse(e.data).message); });
+  es.onerror = () => { if (es.readyState !== EventSource.CLOSED) { es.close(); fail("Lost connection to the server."); } };
+}
+
+function renderReview(list, evidence) {
+  bullets = list;
+  decisions = list.map(() => null);
+  editors = [];
+
+  if (!list.length) {
+    $("cards").replaceChildren(el("p", { className: "meta", textContent: "No bullets were drafted. Add more detail to your experience files and try again." }));
+  } else {
+    $("cards").replaceChildren(...list.map((b, i) => {
+      const text = el("p", { className: "text", textContent: b.text });
+      const editor = el("textarea", { className: "hidden", rows: 3, value: b.text });
+      editors.push(editor);
+      const card = el("div", { className: "card" });
+      const buttons = ["accept", "edit", "reject"].map((action) => {
+        const btn = el("button", { textContent: action[0].toUpperCase() + action.slice(1) });
+        btn.onclick = () => {
+          decisions[i] = action;
+          card.className = "card " + action;
+          text.classList.toggle("hidden", action === "edit");
+          editor.classList.toggle("hidden", action !== "edit");
+          buttons.forEach((other) => other.classList.toggle("on", other === btn));
+          if (action === "edit") editor.focus();
+          updateCounter();
+        };
+        return btn;
+      });
+      const chips = b.evidence_ids.map((id) => el("span", {
+        className: "chip",
+        textContent: `${id} · ${evidence[id]?.source ?? "?"}`,
+        title: evidence[id]?.text ?? "",
+      }));
+      card.append(
+        text, editor,
+        el("div", { className: "meta", textContent: "Covers: " + b.requirement }),
+        el("div", {}, ...chips),
+        el("div", { className: "row actions" }, ...buttons),
+      );
+      return card;
+    }));
+  }
+
+  $("review").classList.remove("hidden");
+  updateCounter();
+  $("review").scrollIntoView({ behavior: "smooth" });
+}
+
+function updateCounter() {
+  const done = decisions.filter(Boolean).length;
+  $("counter").textContent = `${done} of ${bullets.length} reviewed`;
+  $("submit").disabled = done < bullets.length;
+}
+
+async function submit() {
+  const payload = decisions.map((action, i) =>
+    action === "edit" ? { action, text: editors[i].value.trim() } : { action });
+  if (payload.some((d) => d.action === "edit" && !d.text)) {
+    $("reviewError").textContent = "Edited bullets can't be empty.";
+    return;
+  }
+  $("submit").disabled = true;
+  $("reviewError").textContent = "";
+
+  try {
+    const res = await fetch(`/api/runs/${runId}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decisions: payload }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || "Review failed.");
+
+    markStep("human_review", `${body.approved.length} of ${bullets.length} approved`);
+    approvedTexts = body.approved.map((b) => b.text);
+    markdown = body.markdown;
+    $("approved").replaceChildren(...approvedTexts.map((t) => el("li", { textContent: t })));
+    $("savedPath").textContent = "Saved to " + body.output_path;
+    $("review").classList.add("hidden");
+    $("result").classList.remove("hidden");
+    $("start").disabled = false;
+    $("result").scrollIntoView({ behavior: "smooth" });
+  } catch (err) {
+    $("reviewError").textContent = err.message;
+    $("submit").disabled = false;
+  }
+}
+
+$("start").onclick = start;
+$("submit").onclick = submit;
+$("loadSample").onclick = async () => {
+  const res = await fetch("/api/sample-jd");
+  const body = await res.json();
+  $("jd").value = body.jd || "";
+  if (!body.jd) $("startError").textContent = "data/jobs/jd.txt is empty.";
+};
+$("copy").onclick = async () => {
+  await navigator.clipboard.writeText(approvedTexts.map((t) => "- " + t).join("\n"));
+  $("copy").textContent = "Copied!";
+  setTimeout(() => ($("copy").textContent = "Copy bullets"), 1500);
+};
+$("download").onclick = () => {
+  const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
+  el("a", { href: url, download: "tailored_bullets.md" }).click();
+  URL.revokeObjectURL(url);
+};
+</script>
+</body>
+</html>

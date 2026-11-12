@@ -1,0 +1,8 @@
+  langgraph
+  langgraph-checkpoint-sqlite
+  langchain-anthropic
+  llama-index
+  llama-index-embeddings-huggingface
+  python-dotenv
+  fastapi
+  uvicorn
