@@ -1,0 +1,9 @@
+.venv/
+.env
+.git/
+storage/
+outputs/
+checkpoints.db*
+__pycache__/
+*.pyc
+.fastembed_cache/

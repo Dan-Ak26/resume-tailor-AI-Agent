@@ -1,8 +1,9 @@
-  langgraph
-  langgraph-checkpoint-sqlite
-  langchain-anthropic
-  llama-index
-  llama-index-embeddings-fastembed
-  python-dotenv
-  fastapi
-  uvicorn
+   langgraph
+   langgraph-checkpoint-sqlite
+   langchain-anthropic
+   llama-index
+   llama-index-embeddings-fastembed
+   fastembed
+   python-dotenv
+   fastapi
+   uvicorn
