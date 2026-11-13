@@ -2,6 +2,8 @@
 
 A human-in-the-loop AI agent that tailors resume bullets to a specific job description, using **only facts from your real experience**.
 
+**Live demo:** https://resume-tailor-ai-agent.onrender.com (Username: daniel, and password: ak157179)
+
 Paste a job posting → the agent extracts what the employer wants → retrieves matching evidence from your experience files → Claude drafts bullets that cite their sources → **you approve, edit, or reject each one** before anything is saved.
 
 Built with **LangGraph**, **LangChain**, **LlamaIndex**, the **Anthropic API (Claude)**, and **FastAPI** with **Server-Sent Events** for live progress.
