@@ -196,6 +196,8 @@ function renderReview(list, evidence) {
         const btn = el("button", { textContent: action[0].toUpperCase() + action.slice(1) });
         btn.onclick = () => {
           decisions[i] = action;
+          // Keep any edits when switching to Accept/Reject
+          if (action !== "edit") text.textContent = editor.value.trim() || b.text;
           card.className = "card " + action;
           text.classList.toggle("hidden", action === "edit");
           editor.classList.toggle("hidden", action !== "edit");
@@ -232,8 +234,13 @@ function updateCounter() {
 }
 
 async function submit() {
-  const payload = decisions.map((action, i) =>
-    action === "edit" ? { action, text: editors[i].value.trim() } : { action });
+  // An accepted bullet whose text was changed is sent as an edit
+  const payload = decisions.map((action, i) => {
+    const edited = editors[i].value.trim();
+    const changed = edited !== bullets[i].text;
+    if (action === "edit" || (action === "accept" && changed)) return { action: "edit", text: edited };
+    return { action };
+  });
   if (payload.some((d) => d.action === "edit" && !d.text)) {
     $("reviewError").textContent = "Edited bullets can't be empty.";
     return;

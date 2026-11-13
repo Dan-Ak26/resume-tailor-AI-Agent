@@ -9,14 +9,21 @@ Endpoints
   GET  /api/runs/{id}/stream     SSE: live progress, then the drafted bullets for review
   POST /api/runs/{id}/review     send accept/edit/reject decisions -> approved bullets
   GET  /api/sample-jd            contents of data/jobs/jd.txt (for convenience)
+  GET  /healthz                  health check (no password needed)
+
+If the APP_PASSWORD environment variable is set, every page asks for it
+(any username works). Leave it unset for local development.
 """
+import base64
 import json
+import os
+import secrets
 import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -25,6 +32,28 @@ from src.graph import ROOT, build_graph
 app = FastAPI(title="Resume Tailor")
 graph = build_graph()
 RUNS: dict[str, dict] = {}  # run_id -> {"jd": str, "started": bool}
+APP_PASSWORD = os.getenv("APP_PASSWORD")  # read after src.graph has loaded .env
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    """HTTP Basic auth gate so a public deployment can't spend your API credits."""
+    if APP_PASSWORD and request.url.path != "/healthz":
+        authorized = False
+        header = request.headers.get("authorization", "")
+        if header.startswith("Basic "):
+            try:
+                _, _, password = base64.b64decode(header[6:]).decode().partition(":")
+                authorized = secrets.compare_digest(password, APP_PASSWORD)
+            except Exception:
+                authorized = False
+        if not authorized:
+            return Response(
+                "Password required.",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Resume Tailor"'},
+            )
+    return await call_next(request)
 
 
 # ---------- Request models ----------
@@ -63,6 +92,11 @@ def describe(node: str, update: dict) -> dict:
 
 
 # ---------- Routes ----------
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
 @app.get("/")
 def home():
     return FileResponse(ROOT / "static" / "index.html")
