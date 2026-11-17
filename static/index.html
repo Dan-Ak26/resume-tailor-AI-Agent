@@ -55,8 +55,22 @@
   .card.reject { border-color: var(--danger); background: var(--danger-soft); }
   .card.reject .text { text-decoration: line-through; color: var(--muted); }
   .text { margin: 0 0 8px; }
+  .why { font-size: 13px; color: #cfc6e6; margin: 0 0 8px; padding: 8px 10px; border-left: 2px solid var(--accent); background: rgba(139, 92, 246, .06); border-radius: 0 6px 6px 0; }
+  .why b { color: #c9b8ff; font-weight: 600; }
   .chip { display: inline-block; font-size: 12px; color: #c9b8ff; border: 1px solid #3a2f5a; border-radius: 999px; padding: 1px 9px; margin: 6px 4px 0 0; background: rgba(139, 92, 246, .08); cursor: help; }
   .actions button.on { font-weight: 600; border-color: var(--ink); }
+  .upload { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .file-name { font-size: 14px; color: #c9b8ff; }
+  .link { background: none; border: none; padding: 0; color: var(--muted); text-decoration: underline; font-size: 13px; }
+  .link:hover { color: var(--ink); }
+  .privacy { margin: -4px 0 16px; }
+  label.field { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+  #refresh {
+    position: fixed; right: 24px; bottom: 24px; z-index: 10;
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    border-radius: 999px; padding: 10px 18px; box-shadow: 0 6px 24px rgba(139, 92, 246, .35);
+  }
+  #refresh:hover { background: var(--accent-hover); }
   #approved { padding-left: 20px; margin: 0; }
   #approved li { margin-bottom: 6px; }
 </style>
@@ -64,14 +78,24 @@
 <body>
 <main>
   <h1>Resume <span>Tailor</span></h1>
-  <p class="sub">Paste a job description. Claude drafts bullets from your experience, and you approve each one.</p>
+  <p class="sub">Upload your resume and paste a job description. Claude drafts tailored bullets from your experience, and you approve each one.</p>
 
   <section>
-    <h2>1. Job description</h2>
-    <textarea id="jd" placeholder="Paste the job posting here..."></textarea>
+    <h2>1. Your resume &amp; job description</h2>
+    <label class="field">Resume (PDF, up to 5 MB)</label>
+    <div class="upload">
+      <input type="file" id="resumeFile" accept="application/pdf,.pdf" class="hidden">
+      <button id="uploadBtn">Upload resume (PDF)</button>
+      <span class="file-name" id="fileName"></span>
+      <button class="link hidden" id="removeFile">Remove</button>
+      <span class="meta" id="fileHint">No resume uploaded yet. The sample resume will be used.</span>
+    </div>
+    <p class="meta privacy">Your resume and job description are sent to Claude (Anthropic) to draft bullets, and are deleted from this server after you save your review.</p>
+    <label class="field" for="jd">Job description</label>
+    <textarea id="jd" maxlength="15000" placeholder="Paste any job posting here..."></textarea>
     <div class="row">
       <button class="primary" id="start">Tailor my resume</button>
-      <button id="loadSample">Load data/jobs/jd.txt</button>
+      <button id="loadSample">Use sample job description</button>
       <span class="error" id="startError"></span>
     </div>
   </section>
@@ -93,15 +117,16 @@
   </section>
 
   <section id="result" class="hidden">
-    <h2>4. Approved bullets</h2>
+    <h2>3. Approved bullets</h2>
     <ul id="approved"></ul>
     <div class="row">
       <button id="copy">Copy bullets</button>
       <button id="download">Download .md</button>
-      <span class="meta" id="savedPath"></span>
     </div>
   </section>
 </main>
+
+<button id="refresh" title="Clear everything and start over">&#8635; Start over</button>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -112,6 +137,9 @@ const STEPS = [
   ["human_review", "Your review"],
 ];
 let runId = null, bullets = [], decisions = [], editors = [], approvedTexts = [], markdown = "";
+let resumeFile = null;   // the uploaded PDF, if any
+let currentStream = null; // open EventSource, so "Start over" can close it
+const MAX_PDF_BYTES = 5 * 1024 * 1024;
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -154,11 +182,11 @@ async function start() {
   renderSteps();
 
   try {
-    const res = await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jd }),
-    });
+    // multipart/form-data: the job description plus the optional resume PDF
+    const form = new FormData();
+    form.append("jd", jd);
+    if (resumeFile) form.append("resume", resumeFile);
+    const res = await fetch("/api/runs", { method: "POST", body: form });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || "Could not start run.");
     runId = body.run_id;
@@ -166,6 +194,7 @@ async function start() {
 
   // Server-Sent Events: live progress from each LangGraph node
   const es = new EventSource(`/api/runs/${runId}/stream`);
+  currentStream = es;
   es.addEventListener("progress", (e) => {
     const d = JSON.parse(e.data);
     markStep(d.node, d.message);
@@ -212,8 +241,11 @@ function renderReview(list, evidence) {
         textContent: `${id} · ${evidence[id]?.source ?? "?"}`,
         title: evidence[id]?.text ?? "",
       }));
+      const why = b.rationale
+        ? el("p", { className: "why" }, el("b", { textContent: "Why this bullet: " }), b.rationale)
+        : "";
       card.append(
-        text, editor,
+        text, editor, why,
         el("div", { className: "meta", textContent: "Covers: " + b.requirement }),
         el("div", {}, ...chips),
         el("div", { className: "row actions" }, ...buttons),
@@ -261,7 +293,6 @@ async function submit() {
     approvedTexts = body.approved.map((b) => b.text);
     markdown = body.markdown;
     $("approved").replaceChildren(...approvedTexts.map((t) => el("li", { textContent: t })));
-    $("savedPath").textContent = "Saved to " + body.output_path;
     $("review").classList.add("hidden");
     $("result").classList.remove("hidden");
     $("start").disabled = false;
@@ -272,13 +303,47 @@ async function submit() {
   }
 }
 
+function setResumeFile(file) {
+  $("startError").textContent = "";
+  if (file && !file.name.toLowerCase().endsWith(".pdf")) {
+    $("startError").textContent = "Please choose a PDF file.";
+    file = null;
+  } else if (file && file.size > MAX_PDF_BYTES) {
+    $("startError").textContent = "That PDF is larger than 5 MB.";
+    file = null;
+  }
+  resumeFile = file || null;
+  $("fileName").textContent = resumeFile ? resumeFile.name : "";
+  $("removeFile").classList.toggle("hidden", !resumeFile);
+  $("fileHint").classList.toggle("hidden", !!resumeFile);
+  $("uploadBtn").textContent = resumeFile ? "Change resume" : "Upload resume (PDF)";
+  if (!resumeFile) $("resumeFile").value = "";
+}
+
+function startOver() {
+  if (currentStream) { currentStream.close(); currentStream = null; }
+  runId = null; bullets = []; decisions = []; editors = []; approvedTexts = []; markdown = "";
+  setResumeFile(null);
+  $("jd").value = "";
+  ["startError", "reviewError"].forEach((id) => ($(id).textContent = ""));
+  ["progress", "review", "result"].forEach((id) => $(id).classList.add("hidden"));
+  $("cards").replaceChildren();
+  $("approved").replaceChildren();
+  $("start").disabled = false;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+$("uploadBtn").onclick = () => $("resumeFile").click();
+$("resumeFile").onchange = (e) => setResumeFile(e.target.files[0]);
+$("removeFile").onclick = () => setResumeFile(null);
+$("refresh").onclick = startOver;
 $("start").onclick = start;
 $("submit").onclick = submit;
 $("loadSample").onclick = async () => {
   const res = await fetch("/api/sample-jd");
   const body = await res.json();
   $("jd").value = body.jd || "";
-  if (!body.jd) $("startError").textContent = "data/jobs/jd.txt is empty.";
+  if (!body.jd) $("startError").textContent = "No sample job description is available.";
 };
 $("copy").onclick = async () => {
   await navigator.clipboard.writeText(approvedTexts.map((t) => "- " + t).join("\n"));

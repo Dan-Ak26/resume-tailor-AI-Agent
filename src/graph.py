@@ -7,12 +7,13 @@ from typing import TypedDict
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
-from src.index import ROOT, get_retriever
+from src.index import ROOT, get_retriever, retriever_from_text
 
 load_dotenv()
 llm = ChatAnthropic(model="claude-sonnet-5-5", max_tokens=4096)
@@ -28,6 +29,10 @@ class Requirements(BaseModel):
 class Bullet(BaseModel):
     text: str = Field(description="Tailored resume bullet, under ~30 words")
     requirement: str = Field(description="The job requirement this bullet addresses")
+    rationale: str = Field(
+        description="One short sentence explaining why this bullet fits the requirement, "
+                    "naming the specific experience from the evidence it draws on"
+    )
     evidence_ids: list[str] = Field(description="Evidence IDs (e.g. E1, E3) supporting every fact in the bullet")
 
 
@@ -38,6 +43,8 @@ class Bullets(BaseModel):
 # ---------- Graph state ----------
 class State(TypedDict, total=False):
     jd: str
+    resume_text: str  # text of an uploaded resume PDF ("" = use data/experience)
+    resume_name: str
     requirements: list[str]
     evidence: dict[str, dict]  # "E1" -> {"source": file name, "text": chunk}
     bullets: list[dict]
@@ -54,8 +61,14 @@ def parse_jd(state: State) -> State:
 
 
 def retrieve(state: State) -> State:
-    """LlamaIndex: find the experience chunks that match each requirement."""
-    retriever = get_retriever(top_k=3)
+    """LlamaIndex: find the experience chunks that match each requirement.
+
+    Uses the uploaded resume if there is one, otherwise the indexed data/experience files.
+    """
+    if state.get("resume_text"):
+        retriever = retriever_from_text(state["resume_text"], state.get("resume_name") or "resume.pdf")
+    else:
+        retriever = get_retriever(top_k=3)
     evidence, seen = {}, {}
     for req in state["requirements"]:
         for hit in retriever.retrieve(req):
@@ -77,7 +90,9 @@ DRAFT_PROMPT = ChatPromptTemplate.from_messages([
      "evidence IDs it relies on. Skip any requirement the evidence does not support. "
      "Each bullet describes ONE project or accomplishment; never stitch unrelated work together. "
      "Never reuse the same accomplishment in two bullets. No first person. "
-     "Skip education and skills-list requirements; those belong in other resume sections."),
+     "Skip education and skills-list requirements; those belong in other resume sections. "
+     "For each bullet, add a one-sentence rationale that tells the reviewer why it matches "
+     "the requirement and which experience it comes from. Keep the rationale factual."),
     ("human",
      "Job requirements:\n{requirements}\n\nEvidence:\n{evidence}\n\n"
      "Write two alternative bullets per supported requirement, each using a different "
@@ -113,10 +128,12 @@ def human_review(state: State) -> State:
     return {"approved": approved}
 
 
-def finalize(state: State) -> State:
+def finalize(state: State, config: RunnableConfig) -> State:
     out_dir = ROOT / "outputs"
     out_dir.mkdir(exist_ok=True)
-    path = out_dir / "tailored_bullets.md"
+    # One file per run, so different users never overwrite each other's results
+    run_id = config["configurable"].get("thread_id", "run")[:8]
+    path = out_dir / f"tailored_bullets_{run_id}.md"
 
     lines = ["# Tailored bullets", ""]
     for b in state["approved"]:

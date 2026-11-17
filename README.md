@@ -2,9 +2,9 @@
 
 A human-in-the-loop AI agent that tailors resume bullets to a specific job description, using **only facts from your real experience**.
 
-**Live demo:** https://resume-tailor-ai-agent.onrender.com (Username: daniel, and password: ak157179)
+**Live demo:** https://resume-tailor-ai-agent.onrender.com
 
-Paste a job posting → the agent extracts what the employer wants → retrieves matching evidence from your experience files → Claude drafts bullets that cite their sources → **you approve, edit, or reject each one** before anything is saved.
+Upload your resume (PDF) and paste a job posting → the agent extracts what the employer wants → retrieves matching evidence from your experience files → Claude drafts bullets that cite their sources → **you approve, edit, or reject each one** before anything is saved.
 
 Built with **LangGraph**, **LangChain**, **LlamaIndex**, the **Anthropic API (Claude)**, and **FastAPI** with **Server-Sent Events** for live progress.
 
@@ -41,7 +41,7 @@ flowchart LR
 | Node | What it does | Tech |
 |---|---|---|
 | `parse_jd` | Extracts the 5–8 key requirements from the job description as structured output | Claude via LangChain (`with_structured_output`) |
-| `retrieve` | Finds the experience chunks that best match each requirement | LlamaIndex vector index + local `bge-small-en-v1.5` embeddings |
+| `retrieve` | Finds the experience chunks that best match each requirement | LlamaIndex vector index + local `bge-small-en-v1.5` embeddings (FastEmbed) |
 | `draft_bullets` | Writes tailored bullets, each citing evidence IDs; uncited bullets are filtered out | Claude via a LangChain prompt chain |
 | `human_review` | Pauses the graph and waits for human decisions | LangGraph `interrupt()` |
 | `finalize` | Writes approved bullets (with requirement + source file) to Markdown | Python |
@@ -74,9 +74,10 @@ flowchart LR
 | LLM | Anthropic Claude (`claude-sonnet-5-5`) |
 | Orchestration | LangGraph (state graph, `interrupt`, SQLite checkpointer) |
 | LLM framework | LangChain (`ChatAnthropic`, prompt templates, structured output) |
-| Retrieval | LlamaIndex (`VectorStoreIndex`, Markdown node parser) + Hugging Face embeddings |
+| Retrieval | LlamaIndex (`VectorStoreIndex`, Markdown node parser) + FastEmbed (ONNX) embeddings |
 | Backend | FastAPI, Server-Sent Events (streaming progress) |
 | Frontend | Plain HTML/CSS/JavaScript (`EventSource` for SSE) |
+| Deployment | Docker, Render |
 
 ---
 
@@ -96,6 +97,7 @@ resume-tailor/
 ├── main.py             # CLI version of the review flow
 ├── test_graph.py       # End-to-end smoke test (scripted human decisions)
 ├── setup_data.py       # Generates the experience files
+├── Dockerfile
 ├── requirements.txt
 └── .env.example
 ```
@@ -127,6 +129,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Add your experience
 
+In the web app, anyone can **upload a resume PDF**: its text is extracted with `pypdf` and indexed in memory for that run only. Without an upload, the app falls back to the files below.
+
+
 Replace the files in `data/experience/` with your own: one Markdown file per job or project. Use `#`/`##` headings for each role or accomplishment and include concrete details (tools, scale, metrics). The agent can only use what's in these files.
 
 Then build the index:
@@ -151,6 +156,28 @@ Open **http://127.0.0.1:8000**, paste a job description, and click **Tailor my r
 python main.py   # reads data/jobs/jd.txt, review bullets in the terminal
 ```
 
+### Run with Docker
+
+```bash
+docker build -t resume-tailor .
+docker run -p 8000:8000 --env-file .env resume-tailor
+```
+
+Open **http://127.0.0.1:8000**.
+
+### Public deployment safeguards
+
+The app is open to anyone, so it limits usage to protect the API budget:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `RUNS_PER_HOUR` | 5 | Runs per visitor (IP) per hour |
+| `RUNS_PER_DAY` | 100 | Total runs per day across all visitors |
+| Job description | 15,000 chars | Max input size |
+| Resume PDF | 5 MB | Max upload size |
+
+Uploaded resumes, checkpoints, and output files are deleted from the server after the review is saved. Optionally set `APP_PASSWORD` to put the whole app behind a password.
+
 ### Run the test
 
 ```bash
@@ -165,10 +192,11 @@ Runs the full graph, pauses at review, resumes with scripted decisions (accept /
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/runs` | Start a run. Body: `{"jd": "..."}` → `{"run_id": "..."}` |
+| `POST` | `/api/runs` | Start a run. Multipart form: `jd` (text) and optional `resume` (PDF, ≤ 5 MB) → `{"run_id": "..."}` |
 | `GET` | `/api/runs/{run_id}/stream` | SSE stream: `progress` events per node, then a `review` event with drafted bullets |
 | `POST` | `/api/runs/{run_id}/review` | Body: `{"decisions": [{"action": "accept" \| "edit" \| "reject", "text": "..."}]}` → approved bullets |
 | `GET` | `/api/sample-jd` | Returns `data/jobs/jd.txt` |
+| `GET` | `/healthz` | Health check |
 
 Interactive docs are at **http://127.0.0.1:8000/docs**.
 
@@ -179,11 +207,11 @@ Interactive docs are at **http://127.0.0.1:8000/docs**.
 - [ ] Swap the in-memory vector store for **Chroma** or **pgvector**
 - [ ] Evaluation suite: grounding rate, duplicate rate, and acceptance rate across multiple job postings
 - [ ] Export a full tailored resume (`.docx` / PDF)
-- [ ] Dockerfile and deployment to Render
-- [ ] Authentication and rate limiting for a hosted version
+- [x] Dockerfile and deployment to Render
+- [x] Rate limiting and input size caps for the public demo
 
 ---
 
 ## Author
 
-**Daniel Aklilu** 
+**Daniel Aklilu** · [GitHub](https://github.com/Dan-Ak26)

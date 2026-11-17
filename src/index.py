@@ -7,13 +7,14 @@ Re-run it any time you edit files in data/experience.
 from pathlib import Path
 
 from llama_index.core import (
+    Document,
     Settings,
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
     load_index_from_storage,
 )
-from llama_index.core.node_parser import MarkdownNodeParser
+from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +44,19 @@ def build_index(rebuild: bool = False) -> VectorStoreIndex:
 
 def get_retriever(top_k: int = 5):
     return build_index().as_retriever(similarity_top_k=top_k)
+
+
+def retriever_from_text(text: str, source: str = "resume.pdf", top_k: int = 3):
+    """Build a temporary in-memory index over an uploaded resume (never saved to disk).
+
+    Resumes from PDFs have no markdown headings, so split into small chunks
+    (a few bullets each) so retrieval can match individual accomplishments.
+    """
+    doc = Document(text=text, metadata={"file_name": source})
+    index = VectorStoreIndex.from_documents(
+        [doc], transformations=[SentenceSplitter(chunk_size=128, chunk_overlap=16)]
+    )
+    return index.as_retriever(similarity_top_k=top_k)
 
 
 if __name__ == "__main__":
